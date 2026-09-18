@@ -1,0 +1,35 @@
+# ---- Go ----
+go-forwarder/bin/
+go-forwarder/**/*.exe
+*.test
+*.out
+
+# ---- Java / Maven ----
+flink-job/target/
+*.class
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# ---- Generated data / logs ----
+*.log
+logs/
+data/
+*.ndjson
+/tmp/
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ---- Local environment / secrets ----
+.env
+.env.*
+!.env.example
