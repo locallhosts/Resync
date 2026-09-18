@@ -1,0 +1,154 @@
+version: "3.9"
+
+# Full local stack: Kafka + Postgres + Redis, the Java workflow engine,
+# three Go services (sandbox worker, CQRS projector, read API), and the
+# React UI. `docker compose up --build` brings up everything; see
+# README.md for the seed/demo workflow once it's running.
+
+services:
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: soar-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:19092,CONTROLLER://:9093,PLAINTEXT_HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: soar-postgres
+    environment:
+      POSTGRES_USER: soar
+      POSTGRES_PASSWORD: soar
+      POSTGRES_DB: soar
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./go/db/migrations:/docker-entrypoint-initdb.d:ro
+      - soar-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U soar -d soar"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: soar-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --- Java: the event-sourced state machine (Week 2), with startup
+  # recovery (Week 4) baked into main() — see workflow-engine/README.md.
+  workflow-engine:
+    build:
+      context: ./workflow-engine
+    container_name: soar-workflow-engine
+    depends_on:
+      kafka: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+    environment:
+      KAFKA_BROKERS: kafka:19092
+      POSTGRES_DSN: postgres://soar:soar@postgres:5432/soar?sslmode=disable
+      EVENT_TOPIC: soar.events
+      COMMAND_TOPIC: soar.commands
+      CONSUMER_GROUP: workflow-engine
+    restart: unless-stopped
+
+  # --- Go: the isolated execution sandbox (Week 3), Redis-locked
+  # (Week 6). Scale this with `docker compose up --scale sandbox-worker=4`
+  # for the load test — see scripts/load-test.sh.
+  sandbox-worker:
+    build:
+      context: ./go
+      dockerfile: cmd/sandbox-worker/Dockerfile
+    # No container_name here, deliberately: scripts/load-test.sh scales
+    # this service to N replicas via `docker compose up --scale
+    # sandbox-worker=N`, which Compose refuses to do for any service
+    # with a fixed container_name (names must be unique per replica).
+    # demo-recovery.sh's --force-recreate --no-deps sandbox-worker still
+    # works fine without a fixed name — Compose targets the service.
+    depends_on:
+      kafka: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      KAFKA_BROKERS: kafka:19092
+      POSTGRES_DSN: postgres://soar:soar@postgres:5432/soar?sslmode=disable
+      REDIS_ADDR: redis:6379
+      COMMAND_TOPIC: soar.commands
+      EVENT_TOPIC: soar.events
+      CONSUMER_GROUP: sandbox-worker
+      BLOCKIP_FAIL_FOR: "203.0.113.77"
+      # Set to an IP/user-id substring to deterministically crash this
+      # worker the moment it picks up a matching command — the trigger
+      # for the Week 4 recovery demo. Leave empty for normal operation.
+      # scripts/demo-recovery.sh sets this via the CRASH_SIM_VALUE shell
+      # env var before recreating this one container.
+      CRASH_SIM_VALUE: "${CRASH_SIM_VALUE:-}"
+    restart: unless-stopped
+
+  # --- Go: the CQRS read side (Week 5's backend half).
+  projector:
+    build:
+      context: ./go
+      dockerfile: cmd/projector/Dockerfile
+    container_name: soar-projector
+    depends_on:
+      kafka: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+    environment:
+      KAFKA_BROKERS: kafka:19092
+      POSTGRES_DSN: postgres://soar:soar@postgres:5432/soar?sslmode=disable
+      EVENT_TOPIC: soar.events
+      CONSUMER_GROUP: projector
+    restart: unless-stopped
+
+  # --- Go: read-only HTTP API feeding the React UI.
+  api:
+    build:
+      context: ./go
+      dockerfile: cmd/api/Dockerfile
+    container_name: soar-api
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      POSTGRES_DSN: postgres://soar:soar@postgres:5432/soar?sslmode=disable
+      API_ADDR: ":8080"
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  # --- React + TypeScript console (Week 5).
+  ui:
+    build:
+      context: ./ui
+      args:
+        VITE_API_URL: "http://localhost:8080"
+    container_name: soar-ui
+    depends_on:
+      - api
+    ports:
+      - "5173:80"
+    restart: unless-stopped
+
+volumes:
+  soar-pg-data:
