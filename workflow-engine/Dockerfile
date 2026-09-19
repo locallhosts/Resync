@@ -7,7 +7,7 @@ RUN mvn -q -B dependency:go-offline
 COPY src ./src
 RUN mvn -q -B package -DskipTests
 
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:17-jre
 WORKDIR /app
 COPY --from=build /src/target/workflow-engine.jar app.jar
 ENTRYPOINT ["java", "-jar", "app.jar"]

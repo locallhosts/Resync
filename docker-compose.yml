@@ -34,8 +34,6 @@ services:
       POSTGRES_USER: soar
       POSTGRES_PASSWORD: soar
       POSTGRES_DB: soar
-    ports:
-      - "5432:5432"
     volumes:
       - ./go/db/migrations:/docker-entrypoint-initdb.d:ro
       - soar-pg-data:/var/lib/postgresql/data
@@ -63,8 +61,10 @@ services:
       context: ./workflow-engine
     container_name: soar-workflow-engine
     depends_on:
-      kafka: { condition: service_healthy }
-      postgres: { condition: service_healthy }
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       KAFKA_BROKERS: kafka:19092
       POSTGRES_DSN: postgres://soar:soar@postgres:5432/soar?sslmode=disable
@@ -80,6 +80,7 @@ services:
     build:
       context: ./go
       dockerfile: cmd/sandbox-worker/Dockerfile
+
     # No container_name here, deliberately: scripts/load-test.sh scales
     # this service to N replicas via `docker compose up --scale
     # sandbox-worker=N`, which Compose refuses to do for any service
@@ -87,9 +88,12 @@ services:
     # demo-recovery.sh's --force-recreate --no-deps sandbox-worker still
     # works fine without a fixed name — Compose targets the service.
     depends_on:
-      kafka: { condition: service_healthy }
-      postgres: { condition: service_healthy }
-      redis: { condition: service_healthy }
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       KAFKA_BROKERS: kafka:19092
       POSTGRES_DSN: postgres://soar:soar@postgres:5432/soar?sslmode=disable
@@ -98,12 +102,14 @@ services:
       EVENT_TOPIC: soar.events
       CONSUMER_GROUP: sandbox-worker
       BLOCKIP_FAIL_FOR: "203.0.113.77"
+
       # Set to an IP/user-id substring to deterministically crash this
       # worker the moment it picks up a matching command — the trigger
       # for the Week 4 recovery demo. Leave empty for normal operation.
       # scripts/demo-recovery.sh sets this via the CRASH_SIM_VALUE shell
       # env var before recreating this one container.
       CRASH_SIM_VALUE: "${CRASH_SIM_VALUE:-}"
+
     restart: unless-stopped
 
   # --- Go: the CQRS read side (Week 5's backend half).
@@ -113,8 +119,10 @@ services:
       dockerfile: cmd/projector/Dockerfile
     container_name: soar-projector
     depends_on:
-      kafka: { condition: service_healthy }
-      postgres: { condition: service_healthy }
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       KAFKA_BROKERS: kafka:19092
       POSTGRES_DSN: postgres://soar:soar@postgres:5432/soar?sslmode=disable
@@ -129,7 +137,8 @@ services:
       dockerfile: cmd/api/Dockerfile
     container_name: soar-api
     depends_on:
-      postgres: { condition: service_healthy }
+      postgres:
+        condition: service_healthy
     environment:
       POSTGRES_DSN: postgres://soar:soar@postgres:5432/soar?sslmode=disable
       API_ADDR: ":8080"

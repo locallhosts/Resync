@@ -19,11 +19,14 @@ import java.util.UUID;
 /**
  * The JVM-side counterpart to internal/eventstore.Store on the Go side.
  * Same table, same guarantees: per-case sequence numbers are assigned
- * inside a transaction holding a {@code SELECT ... FOR UPDATE} lock on
- * the case's existing rows, so two concurrent appenders for the same
- * case can never collide.
+ * inside a transaction protected by a PostgreSQL transaction advisory lock.
+ *
+ * The advisory lock serializes concurrent appenders for the same case,
+ * allowing MAX(seq) + 1 to be calculated safely without using FOR UPDATE
+ * on an aggregate query.
  */
 public final class EventStore implements AutoCloseable {
+
     private final String dsn;
 
     private EventStore(String dsn) {
@@ -47,10 +50,26 @@ public final class EventStore implements AutoCloseable {
     public Envelope append(Envelope env) throws SQLException {
         try (Connection c = connect()) {
             c.setAutoCommit(false);
+
+            /*
+             * Serialize appends for the same case.
+             *
+             * hashtextextended(UUID::text, 0) produces a bigint suitable
+             * for pg_advisory_xact_lock(bigint). The lock automatically
+             * releases when this transaction commits or rolls back.
+             */
+            try (PreparedStatement lock = c.prepareStatement(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?::text, 0))")) {
+                lock.setObject(1, env.caseId);
+                lock.executeQuery().close();
+            }
+
             long nextSeq;
+
             try (PreparedStatement sel = c.prepareStatement(
-                    "SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE case_id = ? FOR UPDATE")) {
+                    "SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE case_id = ?")) {
                 sel.setObject(1, env.caseId);
+
                 try (ResultSet rs = sel.executeQuery()) {
                     rs.next();
                     nextSeq = rs.getLong(1);
@@ -62,6 +81,7 @@ public final class EventStore implements AutoCloseable {
             try (PreparedStatement ins = c.prepareStatement(
                     "INSERT INTO events (event_id, case_id, seq, type, payload, occurred_at) " +
                             "VALUES (?, ?, ?, ?, ?::jsonb, ?)")) {
+
                 ins.setObject(1, stored.eventId);
                 ins.setObject(2, stored.caseId);
                 ins.setLong(3, stored.seq);
@@ -90,30 +110,33 @@ public final class EventStore implements AutoCloseable {
      */
     public List<Envelope> loadFrom(UUID caseId, long fromSeq) throws SQLException {
         List<Envelope> out = new ArrayList<>();
+
         try (Connection c = connect();
              PreparedStatement sel = c.prepareStatement(
                      "SELECT event_id, case_id, seq, type, payload, occurred_at " +
                              "FROM events WHERE case_id = ? AND seq > ? ORDER BY seq ASC")) {
+
             sel.setObject(1, caseId);
             sel.setLong(2, fromSeq);
+
             try (ResultSet rs = sel.executeQuery()) {
                 while (rs.next()) {
                     out.add(rowToEnvelope(rs));
                 }
             }
         }
+
         return out;
     }
 
     /**
      * Returns the case IDs whose most recent event is ActionCommanded —
      * i.e. a command was issued but no ActionSucceeded/ActionFailed has
-     * been recorded yet. On a clean shutdown this set is empty; after a
-     * crash mid-action, these are exactly the cases
-     * {@link com.example.soar.engine.RecoveryRunner} needs to resume.
+     * been recorded yet.
      */
     public List<UUID> findInFlightCases() throws SQLException {
         List<UUID> out = new ArrayList<>();
+
         String sql = """
                 SELECT e.case_id FROM events e
                 INNER JOIN (
@@ -121,13 +144,16 @@ public final class EventStore implements AutoCloseable {
                 ) latest ON e.case_id = latest.case_id AND e.seq = latest.max_seq
                 WHERE e.type = 'ActionCommanded'
                 """;
+
         try (Connection c = connect();
              PreparedStatement sel = c.prepareStatement(sql);
              ResultSet rs = sel.executeQuery()) {
+
             while (rs.next()) {
                 out.add((UUID) rs.getObject(1));
             }
         }
+
         return out;
     }
 
@@ -138,14 +164,12 @@ public final class EventStore implements AutoCloseable {
         EventType type = EventType.valueOf(rs.getString("type"));
         Map<String, Object> payload = Json.parseObject(rs.getString("payload"));
         Instant occurredAt = rs.getTimestamp("occurred_at").toInstant();
+
         return new Envelope(eventId, caseId, seq, type, payload, occurredAt);
     }
 
     @Override
     public void close() {
-        // No pooled connection held between calls (see connect()), so
-        // there is nothing to release here. Kept as a no-op close()
-        // so callers can still use try-with-resources / AutoCloseable
-        // uniformly with the Go side's Store.Close().
+        // No pooled connection held between calls.
     }
 }

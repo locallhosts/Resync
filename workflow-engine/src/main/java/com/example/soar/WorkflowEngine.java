@@ -19,10 +19,10 @@ import java.util.UUID;
 /**
  * Entry point for Week 2's deliverable: the event-sourced state machine
  * per case, emitting commands. Consumes {@code soar.events} (everything
- * the sandbox worker and this engine itself produce), folds each
- * touched case's full history, decides what — if anything — should
- * happen next, and publishes {@code ActionCommanded} onto
- * {@code soar.commands} for the sandbox worker to pick up.
+ * the sandbox worker and this engine itself produce), folds each touched
+ * case's full history, decides what — if anything — should happen next,
+ * and publishes {@code ActionCommanded} onto {@code soar.commands} for
+ * the sandbox worker to pick up.
  *
  * <p>Every decision the engine makes is durable BEFORE it's published:
  * an {@code ActionCommanded} is appended to the event store first, and
@@ -34,15 +34,29 @@ import java.util.UUID;
 public final class WorkflowEngine {
 
     public static void main(String[] args) throws Exception {
-        List<String> brokers = Arrays.asList(getEnv("KAFKA_BROKERS", "localhost:9092").split(","));
+        List<String> brokers = Arrays.asList(
+                getEnv("KAFKA_BROKERS", "localhost:9092").split(",")
+        );
+
         String eventTopic = getEnv("EVENT_TOPIC", "soar.events");
         String commandTopic = getEnv("COMMAND_TOPIC", "soar.commands");
         String groupId = getEnv("CONSUMER_GROUP", "workflow-engine");
-        String pgDsn = toJdbcUrl(getEnv("POSTGRES_DSN",
-                "postgres://soar:soar@localhost:5432/soar?sslmode=disable"));
+
+        String pgDsn = toJdbcUrl(getEnv(
+                "POSTGRES_DSN",
+                "postgres://soar:soar@localhost:5432/soar?sslmode=disable"
+        ));
+
+        // Temporary diagnostic: show the exact JDBC URL received by the driver.
+        System.out.println("workflow-engine: JDBC URL = " + pgDsn);
 
         EventStore store = EventStore.open(pgDsn);
-        EventBus bus = new EventBus(brokers, commandTopic, eventTopic, groupId);
+        EventBus bus = new EventBus(
+                brokers,
+                commandTopic,
+                eventTopic,
+                groupId
+        );
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("workflow-engine: shutting down");
@@ -54,14 +68,24 @@ public final class WorkflowEngine {
         System.out.println("workflow-engine: running startup recovery");
         new RecoveryRunner(store, bus).run();
 
-        System.out.println("workflow-engine: started (group=" + groupId + ", event_topic=" + eventTopic + ")");
+        System.out.println(
+                "workflow-engine: started (group=" + groupId
+                        + ", event_topic=" + eventTopic + ")"
+        );
 
         while (true) {
-            bus.poll(Duration.ofSeconds(1), envelope -> handle(store, bus, envelope));
+            bus.poll(
+                    Duration.ofSeconds(1),
+                    envelope -> handle(store, bus, envelope)
+            );
         }
     }
 
-    private static void handle(EventStore store, EventBus bus, Envelope envelope) {
+    private static void handle(
+            EventStore store,
+            EventBus bus,
+            Envelope envelope
+    ) {
         // Commands this engine itself just published loop back around
         // on soar.events only once the sandbox worker acts on them and
         // appends an outcome — ActionCommanded events on this topic are
@@ -72,44 +96,77 @@ public final class WorkflowEngine {
         }
 
         UUID caseId = envelope.caseId;
+
         try {
             List<Envelope> history = store.load(caseId);
             CaseState state = CaseStateMachine.fold(caseId, history);
             Decision decision = CaseStateMachine.decide(state);
 
             switch (decision.kind) {
+
                 case COMMAND -> {
-                    Envelope commandEnv = Envelope.of(caseId, EventType.ActionCommanded, Map.of(
-                            "command_id", UUID.randomUUID().toString(),
-                            "action", decision.action,
-                            "params", decision.params
-                    ));
+                    Envelope commandEnv = Envelope.of(
+                            caseId,
+                            EventType.ActionCommanded,
+                            Map.of(
+                                    "command_id",
+                                    UUID.randomUUID().toString(),
+                                    "action",
+                                    decision.action,
+                                    "params",
+                                    decision.params
+                            )
+                    );
+
                     Envelope stored = store.append(commandEnv);
                     bus.publish(caseId.toString(), stored);
-                    System.out.printf("case %s: commanded action=%s (seq=%d)%n",
-                            caseId, decision.action, stored.seq);
+
+                    System.out.printf(
+                            "case %s: commanded action=%s (seq=%d)%n",
+                            caseId,
+                            decision.action,
+                            stored.seq
+                    );
                 }
+
                 case CLOSE -> {
-                    Envelope closeEnv = Envelope.of(caseId, EventType.CaseClosed, Map.of(
-                            "reason", decision.closeReason
-                    ));
+                    Envelope closeEnv = Envelope.of(
+                            caseId,
+                            EventType.CaseClosed,
+                            Map.of(
+                                    "reason",
+                                    decision.closeReason
+                            )
+                    );
+
                     Envelope stored = store.append(closeEnv);
                     bus.publish(caseId.toString(), stored);
-                    System.out.printf("case %s: closed reason=%s (seq=%d)%n",
-                            caseId, decision.closeReason, stored.seq);
+
+                    System.out.printf(
+                            "case %s: closed reason=%s (seq=%d)%n",
+                            caseId,
+                            decision.closeReason,
+                            stored.seq
+                    );
                 }
+
                 case NONE -> {
                     // Nothing to do yet — e.g. waiting on an outstanding
                     // command's outcome, or a low-severity alert this
                     // portfolio-scope playbook doesn't auto-act on.
                 }
             }
+
         } catch (SQLException e) {
             // Deliberately do not crash the whole engine over one case's
             // DB hiccup; log and let the next relevant event (or the
             // next startup's RecoveryRunner pass, if this was actually
             // fatal) pick it back up.
-            System.err.printf("case %s: error handling event: %s%n", caseId, e.getMessage());
+            System.err.printf(
+                    "case %s: error handling event: %s%n",
+                    caseId,
+                    e.getMessage()
+            );
         }
     }
 
@@ -120,12 +177,49 @@ public final class WorkflowEngine {
      * translates between the two rather than maintaining two separate
      * env var conventions across languages.
      */
+    
     static String toJdbcUrl(String dsn) {
         if (dsn.startsWith("jdbc:")) {
             return dsn;
         }
-        return "jdbc:" + dsn.replaceFirst("^postgres://", "postgresql://");
+
+        if (!dsn.startsWith("postgres://")) {
+            throw new IllegalArgumentException(
+                    "Unsupported PostgreSQL DSN: " + dsn
+            );
+        }
+
+        String rest = dsn.substring("postgres://".length());
+
+        int at = rest.indexOf('@');
+        if (at < 0) {
+            throw new IllegalArgumentException(
+                    "PostgreSQL DSN is missing credentials: " + dsn
+            );
+        }
+
+        String credentials = rest.substring(0, at);
+        String hostAndDatabase = rest.substring(at + 1);
+
+        int colon = credentials.indexOf(':');
+        if (colon < 0) {
+            throw new IllegalArgumentException(
+                    "PostgreSQL DSN is missing password: " + dsn
+            );
+        }
+
+        String username = credentials.substring(0, colon);
+        String password = credentials.substring(colon + 1);
+
+        String separator = hostAndDatabase.contains("?") ? "&" : "?";
+
+        return "jdbc:postgresql://"
+                + hostAndDatabase
+                + separator
+                + "user=" + username
+                + "&password=" + password;
     }
+
 
     private static String getEnv(String key, String def) {
         String v = System.getenv(key);
