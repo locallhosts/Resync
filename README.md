@@ -6,7 +6,7 @@ Resync is a distributed SOAR platform built to demonstrate how security alerts c
 
 The project combines **event sourcing, CQRS, Apache Kafka, PostgreSQL, Redis, Go, Java, React, and TypeScript** into one reproducible local environment.
 
-![Resync live demo](docs/vidoes/live-demo.gif)
+[![Resync live demo](docs/videos/live-demo.gif)](https://github.com/locallhosts/Resync/blob/main/docs/videos/live-demo.gif)
 
 > End-to-end demo: alert ingestion → workflow decision → action execution → projected case state.
 
@@ -26,7 +26,7 @@ The included demo assets show the platform processing real local cases.
 
 ### Live platform
 
-![Resync live demo](docs/vidoes/live-demo.gif)
+[![Resync live demo](docs/videos/live-demo.gif)](https://github.com/locallhosts/Resync/blob/main/docs/videos/live-demo.gif)
 
 ### Case view
 
@@ -39,6 +39,8 @@ The included demo assets show the platform processing real local cases.
 ---
 
 ## Architecture
+
+[![Resync Architecture](docs/screenshots/architecture.jpeg)](https://github.com/locallhosts/Resync/blob/main/docs/screenshots/architecture.jpeg)
 
 Resync uses an event-driven architecture in which alerts are persisted as events, processed through Kafka and the Java workflow engine, executed by Go workers, and projected into a CQRS read model for the React console.
 
