@@ -8,41 +8,13 @@ The project combines **event sourcing, CQRS, Apache Kafka, PostgreSQL, Redis, Go
 
 ![Resync live demo](docs/vidoes/live-demo.gif)
 
+> End-to-end demo: alert ingestion → workflow decision → action execution → projected case state.
+
 ---
 
 ## What Resync Does
 
-A security alert enters the platform as an immutable event and moves through the workflow:
-
-```text
-Alert
-  ↓
-PostgreSQL Event Store
-  ↓
-Kafka: soar.events
-  ↓
-Java Workflow Engine
-  ↓
-ActionCommanded
-  ↓
-Kafka: soar.commands
-  ↓
-Go Sandbox Worker
-  ↓
-ActionSucceeded / ActionFailed
-  ↓
-PostgreSQL Event Store
-  ↓
-Go Projector
-  ↓
-CQRS Read Model
-  ↓
-Go REST API
-  ↓
-React Security Console
-```
-
-For a high-severity alert containing an IP address, the current demo workflow can issue a `BlockIP` action.
+For a high-severity alert/ containing an IP address, the current demo workflow can issue a `BlockIP` action.
 
 The important design principle is that the **event log is the durable source of truth**. The dashboard is a read model derived from that event history.
 
@@ -68,74 +40,7 @@ The included demo assets show the platform processing real local cases.
 
 ## Architecture
 
-```text
-                         ┌──────────────────────┐
-                         │    Alert / Seed CLI  │
-                         └──────────┬───────────┘
-                                    │
-                              AlertReceived
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │      PostgreSQL      │
-                         │     Event Store      │
-                         └──────────┬───────────┘
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │        Kafka         │
-                         │     soar.events      │
-                         └──────────┬───────────┘
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │   Java Workflow      │
-                         │       Engine         │
-                         │                      │
-                         │  replay + decisions  │
-                         │  recovery            │
-                         └──────────┬───────────┘
-                                    │
-                              ActionCommanded
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │        Kafka         │
-                         │    soar.commands     │
-                         └──────────┬───────────┘
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │    Go Sandbox Worker  │
-                         │                      │
-                         │  Redis lock           │
-                         │  Action execution     │
-                         └──────────┬───────────┘
-                                    │
-                         ActionSucceeded/Failed
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │     PostgreSQL       │
-                         │     Event Store      │
-                         └──────────┬───────────┘
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │     Go Projector     │
-                         │    CQRS Read Model   │
-                         └──────────┬───────────┘
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │       Go API         │
-                         └──────────┬───────────┘
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │    React + TS UI     │
-                         └──────────────────────┘
-```
+Resync uses an event-driven architecture in which alerts are persisted as events, processed through Kafka and the Java workflow engine, executed by Go workers, and projected into a CQRS read model for the React console.
 
 Supporting services:
 
@@ -546,52 +451,7 @@ The load test defaults to multiple cases and worker replicas and checks that eve
 
 ---
 
-## Project Structure
-
-```text
-Resync/
-├── go/
-│   ├── cmd/
-│   │   ├── api/
-│   │   ├── projector/
-│   │   ├── sandbox-worker/
-│   │   └── seed/
-│   ├── internal/
-│   │   ├── actions/
-│   │   ├── eventstore/
-│   │   ├── events/
-│   │   ├── kafkabus/
-│   │   └── lock/
-│   └── db/
-│       └── migrations/
-│
-├── workflow-engine/
-│   └── src/
-│       └── main/
-│           └── java/
-│
-├── ui/
-│   └── src/
-│
-├── scripts/
-│   ├── demo-recovery.sh
-│   └── load-test.sh
-│
-├── docs/
-│   ├── screenshots/
-│   │   ├── case-alert.png
-│   │   └── demo-case.png
-│   └── vidoes/
-│       └── live-demo.gif
-│
-├── docker-compose.yml
-├── architecture.md
-└── README.md
-```
-
----
-
-## Technology Stack
+## Technology Stack/
 
 | Component | Technology |
 |---|---|
